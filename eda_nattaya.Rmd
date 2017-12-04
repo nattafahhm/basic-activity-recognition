@@ -1,0 +1,186 @@
+---
+title: "Data Analysis for Data Science Class"
+author: "Nattaya Mairittha"
+date: "2017/11/22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("/Users/nattafahh/Documents/Master/DataSci/DataAna")
+load("data/samsungData.rda")
+names(samsungData)[1:12]
+table(samsungData$activity)
+library(knitr)
+library(kableExtra)
+library(dplyr)
+library(ggplot2)
+#import for ml
+library(FNN) 
+library(e1071)
+library(randomForest)
+#import my lib 
+source("lib/grid_arrange.R")
+source("lib/myplclust.R")
+options(knitr.table.format = "html") 
+```
+
+## Propose 
+1. Exploratory data analysis of human activity data
+
+2. Recognition of human activities using machine learning methods with mobile-sensor
+
+## Dataset
+<b>Human Activity Recognition Using Smartphones Data Set</b>
+
+Human Activity Recognition database built from the recordings of 30 subjects performing activities of daily living (ADL) while carrying a waist-mounted smartphone with embedded inertial sensors.
+
+<b>Data Set Information:</b>
+```{r overview data set, echo=FALSE}
+text_tbl <- data.frame(
+  Items = c("Data Set Characteristics:", "Attribute Characteristics:", "Associated Tasks:"),
+  Features = c("Multivariate, Time-Series", "N/A", "Classification, Clustering"),
+  Items = c("Number of Instances:", "Number of Attributes:", "Missing Values?"),
+  Features = c("10299", "561", "N/A"),
+  Items = c("Area:", "Date Donated:", "Number of Web Hits:"),
+  Features = c("Computer", "2012-12-10", "560332")
+)
+
+kable(text_tbl, "html") %>%
+  kable_styling("striped","hover", full_width = F) %>%
+  column_spec(2, bold = T, border_right = T) %>%
+  column_spec(4, bold = T, border_right = T) 
+```
+
+<b>Source:</b>
+U.C.I. machine learning repository: http://archive.ics.uci.edu/ml/datasets/Human+Activity+Recognition+Using+Smartphones
+
+##  Exploratory data analysis: 
+Analyzing data sets to summarize their main characteristics with visual methods.
+
+### Plotting max acceleration for the first subject
+As shown in Fig. 1 and Fig. 2, we can see some activity classes varies. For example, lying and standing and sitting, there is not a lot of interesting things going on, whereas walking in, and walking up, and walking down, the maximum acceleration shows a lot of variability. so it might be a good predictor. So that may be a predictor of those kinds of activities.
+
+```{r plot max}
+# convert the activity variable into a factor variable.
+samsungData <- transform(samsungData, activity = factor(activity))
+# select only first subject
+sub1 <- subset(samsungData, subject == 1)
+par(mfrow=c(1,1))
+# plot max x
+qplot(seq_along(sub1$fBodyAcc.max...X), sub1$fBodyAcc.max...X, colour=sub1$activity) + labs(title ="Figure 1. Max acceleration X", x="Index",y="Max the body linear acceleration X", colour="Activity classes")  +
+    theme(plot.title = element_text(hjust = 0.5),
+          text=element_text(size=14,family="ArialMT"),
+          legend.justification=c(1,0))
+# plot max y
+qplot(seq_along(sub1$fBodyAcc.max...Y), sub1$fBodyAcc.max...Y, colour=sub1$activity) + labs(title="Figure 2. Max acceleration Y", x="Index",y="Max the body linear acceleration Y", colour="Activity classes")  +
+  theme(plot.title = element_text(hjust = 0.5),
+        text=element_text(size=14,family="ArialMT"),
+        legend.justification=c(1,0))
+```
+
+### Clustering based on maximum acceleration
+In this section, I try to cluster the data based on maximum acceleration. As shown in Fig. 3, we can see that there are two very clear clusters. On the left hand side, you have got the kind of the various walking activities, and on the right hand side you have got the various non-moving activities such as laying, standing, and sitting. Also, beyond that things are a little bit jumbled together.
+
+In summary,  a cluster based on maximum acceleration seems to separate out moving from non-moving. Obviously, you can see there is a lot of turquoise on the left, so that is clearly one activity and the kind of magenta are mixed together.On the other hand, once you get within those clusters, for example, within the moving cluster or within the non-moving cluster, then it is a little bit hard to explain what is what, based just on maximum acceleration.
+
+```{r clustering max}
+# select first subject and select max acceleration x,y,z columns
+numericActivity <- as.numeric(as.factor(samsungData$activity))[samsungData$subject==1]
+distanceMatrix <- dist(samsungData[samsungData$subject==1,1:3])
+hclustering <- hclust(distanceMatrix)
+myplclust(hclustering,lab.col=numericActivity)
+```
+
+##  Machine Learning for Human Activity Recognition 
+```{r function for evaluation, echo=FALSE}
+do_eval = function(label, pre){
+  if(length(label)!=length(pre))return()
+  tab = table(pre, label)
+  
+  accuracy = sum(diag(tab))/sum(tab)
+  cat("accuracy:", round(accuracy*100, 2), "%, ")
+  
+  precision = mean(diag(tab) / rowSums(tab))
+  cat("precision:", round(precision*100, 2), "%, ")
+  
+  recall = mean(diag(tab / colSums(tab)))
+  cat("recall:", round(recall*100, 2), "%, ")
+  
+  f_measure = 2*precision*recall / (precision + recall) 
+  cat("F-measure", round(f_measure*100,2), "%¥n")
+  
+  print(table(pre, label))
+  
+  # return acc
+  return(round(accuracy*100, 2))
+}
+```
+
+### Evaluating
+1. Select feature set different and assign to columns. The details are presented in the table below.
+2. Create a Validation Dataset: Separating data into training and testing sets. (In this case:50:50)
+3. Feed the resulting features to the learning algorithm to build models
+4. Use the model to generate predictions of the target answer for new data instances.
+5. Evaluate the quality of the models on data that was held out from model building.
+
+```{r evaluate}
+samsungData$activity  <- as.factor(samsungData$activity)
+
+# Select and assign feature columns because in this example case if select all, it takes longer times
+names(samsungData)[1:12]
+featcols = colnames(samsungData)[1:12]
+
+# Split arrays or matrices into train and test subsets
+subjects <- levels(factor(samsungData$subject))
+train = samsungData[samsungData$subject %in% subjects[1:15],c(featcols,"activity")]
+test = samsungData[samsungData$subject %in% subjects[16:30],c(featcols,"activity")]
+
+# Machine Learning with KNN
+pre = knn(train[,featcols],test[,featcols], train$activity)
+result_knn <- do_eval(test$activity,pre)
+
+# Machine Learning with Naive Bayes
+model = naiveBayes(activity~., train)
+pre = predict(model, test)
+result_bayes <- do_eval(test$activity,pre)
+
+# Machine Learning with Random forest
+model = randomForest(activity~., train)
+pre = predict(model, test)
+result_random <- do_eval(test$activity,pre)
+
+```
+
+### Results
+Following the evaluation approach discussed above, Fig. 4 shows the results for k-NN, NaiveBayes, and RandomForest as the underlying machine learning algorithm. 
+
+Averaging all activity classes, when we adopt k-NN as the underlying algorithm, <b>accuracy is `r I(result_knn)` %.</b> When we adopt NaiveBayes as the underlying algorithm, <b>accuracy is `r I(result_bayes)` %.</b>, moreover, when we adopt RandomForest as the underlying algorithm, <b>accuracy is `r I(result_random)` %.</b>
+
+```{r plot result, echo=FALSE}
+acc = c(result_knn, result_bayes, result_random) 
+method = c("KNN", "NaiveBayes", "RandomForest") 
+df = data.frame(acc, method)       # df is a data frame
+
+ggplot(df, aes(x=factor(df$method), y=df$acc,fill=df$method))+
+  labs(x="Method",y="Accuracy [%]", title="Average accuracy for all classes with\nk-NN, NaiveBayes, and RandomForest", fill="ML algorithms")  +
+  theme(plot.title = element_text(hjust = 0.5),
+        text=element_text(size=14,family="ArialMT"),
+        legend.justification=c(1,0), legend.position=c(1, 0)) +
+  scale_fill_brewer(palette="Paired")+
+  geom_bar(stat = "identity",position=position_dodge())+
+  geom_text(aes( label = df$acc,
+                 y=df$acc), 
+            stat= "identity", vjust = 1.6,position = position_dodge(0.9), 
+            size=6, family="ArialMT")
+
+```
+
+### Summary
+The best absolute accuracy is by RandomForest (and then KNN and NaiveBays, respectively). The reason why RandomForest is better would be because the probability modeling of it is perfect, compared with other probabilistic methods. 
+<br>
+<br>
+
+
+
+
